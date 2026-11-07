@@ -1,8 +1,8 @@
 {
- "name": "Chim Bay Vượt Ống",
- "short_name": "Chim Bay",
+ "name": "Flapping Bird",
+ "short_name": "Flapping Bird",
  "lang": "vi",
- "description": "Game chim bay vượt ống: chạm để vỗ cánh, lách qua ống xanh ghi điểm, càng chơi càng nhanh tay nhanh mắt.",
+ "description": "Game Flapping Bird: chạm để vỗ cánh, lách qua ống xanh ghi điểm, càng chơi càng nhanh tay nhanh mắt.",
  "start_url": ".",
  "scope": ".",
  "display": "standalone",
