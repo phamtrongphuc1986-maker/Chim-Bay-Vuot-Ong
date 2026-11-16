@@ -130,7 +130,7 @@
         Qua mỗi ống được <b>+1 điểm</b>. Chim có <b>5 vạch máu</b> trên đầu — chạm ống mất 1 vạch, hết máu là thua.<br>
         💗 Nhặt <b>trái tim</b> bay trên đường: <b>+1 vạch máu</b>, cộng dồn được hơn 5 vạch. Còn 3 hoặc 1 vạch máu sẽ hiện nút nạp +1 máu (xem quảng cáo + 15.000đ).<br>
         ⭐ <b>Cấp độ chim:</b> sống sót mỗi 300 giây là qua 1 level — Level 1 là 300 giây đầu tiên, cấp độ lưu vĩnh viễn, không giới hạn.<br>
-        ☠️ Chết là phải <b>chờ mới chơi lại</b>: chết lần 1 chờ 8 tiếng, lần 2 chờ 12 tiếng, từ lần 3 chờ 24 tiếng.
+        ☠️ Chết là phải <b>chờ mới chơi lại</b>: chết lần 1 chờ 8 tiếng, lần 2 chờ 12 tiếng, từ lần 3 chờ 24 tiếng. Giờ chờ tính theo <b>giờ máy chủ</b> — đổi giờ điện thoại, múi giờ hay VPN đều không qua được.
       </div>
       <button class="btn green" id="btnStart">▶ BẮT ĐẦU</button>
       <div class="lockNote hidden" id="lockNote"></div>
@@ -269,6 +269,42 @@ var elPayCode = document.getElementById('payCode');
 var elPayQr = document.getElementById('payQr');
 var elPayStatus = document.getElementById('payStatus');
 
+/* ===== Giờ máy chủ VPS (lệnh Phúc 21:23 16/11/2026) =====
+   Khóa chờ tính theo GIỜ MÁY CHỦ, không theo giờ điện thoại: đồng bộ qua
+   https://game.hialo.vn/mochi-pay/api/time rồi neo vào đồng hồ đơn điệu
+   (performance.now) nên đổi giờ/múi giờ trên máy hay dùng VPN/proxy đều không qua được. */
+var CLOCK_KEY = 'flap-clock-v1';
+var clockAnchor = null;        // {server, perf} tại lần đồng bộ gần nhất
+var timeSynced = false;
+var lastServerNow = 0;         // mốc giờ máy chủ lớn nhất từng biết (sàn chống lùi giờ)
+try {
+  var ck = JSON.parse(localStorage.getItem(CLOCK_KEY) || 'null');
+  if (ck && ck.last) lastServerNow = ck.last | 0;
+} catch(e){}
+function serverNow(){
+  var t;
+  if (clockAnchor) t = clockAnchor.server + (performance.now() - clockAnchor.perf);
+  else t = Math.max(Date.now(), lastServerNow);
+  if (t > lastServerNow) lastServerNow = t;
+  return t;
+}
+function saveClock(){ try { localStorage.setItem(CLOCK_KEY, JSON.stringify({ last: lastServerNow })); } catch(e){} }
+function syncServerTime(){
+  fetch(PAY_API + '/api/time')
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d && d.ok && d.now){
+        clockAnchor = { server: d.now, perf: performance.now() };
+        timeSynced = true;
+        if (d.now > lastServerNow) lastServerNow = d.now;
+        saveClock();
+        refreshLockUI();
+      }
+    })
+    .catch(function(){});
+}
+setInterval(syncServerTime, 30000);
+
 /* ===== Khóa chờ sau khi chết (lệnh Phúc 21:02 16/11/2026) =====
    Chết lần 1: chờ 8 tiếng · lần 2: 12 tiếng · từ lần 3: 24 tiếng.
    Số lần chết cộng dồn vĩnh viễn (lưu localStorage), hết giờ chờ mới chơi lại được. */
@@ -276,7 +312,14 @@ var LOCK_KEY = 'flap-lock-v1';
 var lockDeaths = 0, lockUntil = 0;
 try {
   var lk = JSON.parse(localStorage.getItem(LOCK_KEY) || 'null');
-  if (lk){ lockDeaths = lk.deaths | 0; lockUntil = lk.until | 0; }
+  if (lk){
+    lockDeaths = lk.deaths | 0; lockUntil = lk.until | 0;
+    if (lockUntil){
+      // Ước lượng giờ máy chủ hiện tại từ mốc đã lưu, làm sàn trước khi đồng bộ được
+      var est = (lk.savedServer | 0) + Math.max(0, Date.now() - (lk.savedDevice || Date.now()));
+      if (est > lastServerNow) lastServerNow = est;
+    }
+  }
 } catch(e){}
 /* ===== Cấp độ chim (lệnh Phúc 21:08 16/11/2026) =====
    Đang chơi ở Level = mỗi 300 giây sống sót là qua 1 level: Level 1 phải vượt qua
@@ -301,12 +344,12 @@ var elOverWait = document.getElementById('overWait');
 var elBtnStart = document.getElementById('btnStart');
 var elBtnAgain = document.getElementById('btnAgain');
 function lockHoursFor(n){ return n <= 1 ? 8 : (n === 2 ? 12 : 24); }
-function lockRemainMs(){ return Math.max(0, lockUntil - Date.now()); }
+function lockRemainMs(){ return Math.max(0, lockUntil - serverNow()); }
 function isLocked(){ return lockRemainMs() > 0; }
-function saveLock(){ try { localStorage.setItem(LOCK_KEY, JSON.stringify({ deaths: lockDeaths, until: lockUntil })); } catch(e){} }
+function saveLock(){ try { localStorage.setItem(LOCK_KEY, JSON.stringify({ deaths: lockDeaths, until: lockUntil, savedServer: serverNow(), savedDevice: Date.now() })); } catch(e){} saveClock(); }
 function registerDeath(){
   lockDeaths++;
-  lockUntil = Date.now() + lockHoursFor(lockDeaths) * 3600 * 1000;
+  lockUntil = serverNow() + lockHoursFor(lockDeaths) * 3600 * 1000;
   saveLock();
 }
 function fmtWait(ms){
@@ -360,6 +403,7 @@ function medalFor(s){
 }
 
 function startGame(){
+  if (lockUntil > 0 && !timeSynced){ syncServerTime(); return; } // có khóa đã lưu: phải chốt giờ máy chủ trước khi quyết định
   if (isLocked()){ refreshLockUI(); return; } // đang trong giờ chờ sau khi chết
   reset();
   state = 'playing';
@@ -429,6 +473,7 @@ function grazePipe(){
 function gameOver(){
   state = 'over';
   registerDeath();
+  syncServerTime();
   refreshLevelLine();
   if (elOverLevel) elOverLevel.textContent = '⭐ Ván này đạt Level ' + runLevel + ' · Cấp cao nhất: Level ' + bestLevel;
   if (elOverWait) elOverWait.textContent = '⏳ Chết lần thứ ' + lockDeaths + ' — phải chờ ' + lockHoursFor(lockDeaths) + ' tiếng mới chơi lại được. Bấm CHƠI LẠI để xem đồng hồ đếm ngược.';
@@ -862,6 +907,8 @@ window.__chim = {
   bestLevel: function(){ return bestLevel; },
   lock: function(){ return { deaths: lockDeaths, until: lockUntil, locked: isLocked(), remainSec: Math.ceil(lockRemainMs() / 1000) }; },
   clearLock: function(){ lockDeaths = 0; lockUntil = 0; saveLock(); refreshLockUI(); },
+  serverNow: function(){ return Math.floor(serverNow()); },
+  synced: function(){ return timeSynced; },
   time: function(){ return Math.floor(playTime); },
   setHp: function(n){ hp = Math.max(0, Math.min(HP_MAX, n | 0)); updateHpBtn(); },
   spawnHeart: function(){ if (!heart) spawnHeart(); },
@@ -874,6 +921,7 @@ resize();
 reset();
 refreshLockUI();
 refreshLevelLine();
+syncServerTime();
 elBestLine.textContent = '🏆 Kỷ lục: ' + best;
 requestAnimationFrame(loop);
 })();
