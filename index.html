@@ -649,7 +649,7 @@ function drawHealth(){
   var slots = Math.max(HP_MAX, hp);   // nhặt tim thì vạch máu dài thêm quá 5
   var totalW = slots * bw + (slots - 1) * gp;
   var x0 = BIRD_X - totalW / 2, y0 = bird.y - BIRD_R - 17;
-  var col = hp >= 3 ? '#57d93d' : (hp === 2 ? '#ffb03a' : '#e62e2e');
+  var col = '#ff1e1e'; // vạch máu ĐỎ TƯƠI (Phúc chốt 21:07 16/11)
   for (var i = 0; i < slots; i++){
     var x = x0 + i * (bw + gp);
     ctx.fillStyle = i < hp ? col : 'rgba(255,255,255,.28)';
