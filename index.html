@@ -279,7 +279,7 @@ var timeSynced = false;
 var lastServerNow = 0;         // mốc giờ máy chủ lớn nhất từng biết (sàn chống lùi giờ)
 try {
   var ck = JSON.parse(localStorage.getItem(CLOCK_KEY) || 'null');
-  if (ck && ck.last) lastServerNow = ck.last | 0;
+  if (ck && ck.last) lastServerNow = Number(ck.last) || 0;
 } catch(e){}
 function serverNow(){
   var t;
@@ -313,10 +313,10 @@ var lockDeaths = 0, lockUntil = 0;
 try {
   var lk = JSON.parse(localStorage.getItem(LOCK_KEY) || 'null');
   if (lk){
-    lockDeaths = lk.deaths | 0; lockUntil = lk.until | 0;
+    lockDeaths = Number(lk.deaths) || 0; lockUntil = Number(lk.until) || 0;
     if (lockUntil){
       // Ước lượng giờ máy chủ hiện tại từ mốc đã lưu, làm sàn trước khi đồng bộ được
-      var est = (lk.savedServer | 0) + Math.max(0, Date.now() - (lk.savedDevice || Date.now()));
+      var est = (Number(lk.savedServer) || 0) + Math.max(0, Date.now() - (lk.savedDevice || Date.now()));
       if (est > lastServerNow) lastServerNow = est;
     }
   }
