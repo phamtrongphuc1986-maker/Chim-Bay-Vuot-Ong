@@ -129,10 +129,12 @@
         <b>Chạm màn hình</b>, bấm <b>chuột</b> hoặc phím <b>Cách (Space)</b> để chim bay lên.<br>
         Qua mỗi ống được <b>+1 điểm</b>. Chim có <b>5 vạch máu</b> trên đầu — chạm ống mất 1 vạch, hết máu là thua.<br>
         💗 Nhặt <b>trái tim</b> bay trên đường: <b>+1 vạch máu</b>, cộng dồn được hơn 5 vạch. Còn 3 hoặc 1 vạch máu sẽ hiện nút nạp +1 máu (xem quảng cáo + 15.000đ).<br>
+        ⭐ <b>Cấp độ chim:</b> sống sót mỗi 300 giây là qua 1 level — Level 1 là 300 giây đầu tiên, cấp độ lưu vĩnh viễn, không giới hạn.<br>
         ☠️ Chết là phải <b>chờ mới chơi lại</b>: chết lần 1 chờ 8 tiếng, lần 2 chờ 12 tiếng, từ lần 3 chờ 24 tiếng.
       </div>
       <button class="btn green" id="btnStart">▶ BẮT ĐẦU</button>
       <div class="lockNote hidden" id="lockNote"></div>
+      <div class="bestLine" id="levelLine">🐦 Flapping Bird — Level 1</div>
       <div class="bestLine" id="bestLine">🏆 Kỷ lục: 0</div>
     </div>
 
@@ -141,6 +143,7 @@
         <div class="overTitle">THUA RỒI!</div>
         <div class="medalBox" id="medalIcon">🥉</div>
         <div class="medalName" id="medalName">Huy chương Đồng</div>
+        <div class="medalName" id="overLevel"></div>
         <div class="scoreRow">
           <div class="scoreCell"><div class="lbl">ĐIỂM</div><div class="val" id="finalScore">0</div></div>
           <div class="scoreCell"><div class="lbl">KỶ LỤC<span id="newBadge" class="hidden">MỚI!</span></div><div class="val" id="finalBest">0</div></div>
@@ -275,6 +278,24 @@ try {
   var lk = JSON.parse(localStorage.getItem(LOCK_KEY) || 'null');
   if (lk){ lockDeaths = lk.deaths | 0; lockUntil = lk.until | 0; }
 } catch(e){}
+/* ===== Cấp độ chim (lệnh Phúc 21:08 16/11/2026) =====
+   Đang chơi ở Level = mỗi 300 giây sống sót là qua 1 level: Level 1 phải vượt qua
+   300 giây đầu tiên, 600 giây lên Level 2, 900 giây Level 3... không giới hạn (100, 200, 300...).
+   Cấp cao nhất đạt được lưu vĩnh viễn. */
+var LEVEL_SECONDS = 300;
+var LEVEL_KEY = 'flap-level-v1';
+var bestLevel = 1, runLevel = 1, levelBannerUntil = 0;
+try {
+  var bl = parseInt(localStorage.getItem(LEVEL_KEY) || '1', 10);
+  if (bl >= 1) bestLevel = bl;
+} catch(e){}
+var elLevelLine = document.getElementById('levelLine');
+var elOverLevel = document.getElementById('overLevel');
+function refreshLevelLine(){
+  if (elLevelLine) elLevelLine.textContent = '🐦 Flapping Bird — Level ' + bestLevel;
+}
+function sfxLevel(){ tone(523, 523, 0.1, 'square', 0.12); tone(659, 659, 0.1, 'square', 0.12, 0.1); tone(784, 784, 0.18, 'square', 0.14, 0.2); }
+
 var elLockNote = document.getElementById('lockNote');
 var elOverWait = document.getElementById('overWait');
 var elBtnStart = document.getElementById('btnStart');
@@ -315,6 +336,7 @@ function reset(){
   pipes = [];
   score = 0; frames = 0; isNewRecord = false;
   hp = HP_MAX; heartsGot = 0; playTime = 0;
+  runLevel = 1; levelBannerUntil = 0;
   heart = null; nextHeartAt = 120; floaters = [];
   invulnUntil = 0; flashAt = 0;
   if (payOpen) closeHpFlow();
@@ -351,6 +373,7 @@ function showStart(){
   state = 'ready';
   reset();
   refreshLockUI();
+  refreshLevelLine();
   elStart.classList.remove('hidden');
   elOver.classList.add('hidden');
   elScore.classList.remove('on');
@@ -406,6 +429,8 @@ function grazePipe(){
 function gameOver(){
   state = 'over';
   registerDeath();
+  refreshLevelLine();
+  if (elOverLevel) elOverLevel.textContent = '⭐ Ván này đạt Level ' + runLevel + ' · Cấp cao nhất: Level ' + bestLevel;
   if (elOverWait) elOverWait.textContent = '⏳ Chết lần thứ ' + lockDeaths + ' — phải chờ ' + lockHoursFor(lockDeaths) + ' tiếng mới chơi lại được. Bấm CHƠI LẠI để xem đồng hồ đếm ngược.';
   refreshLockUI();
   updateHpBtn();
@@ -449,8 +474,18 @@ function update(dt){
   if (bird.y < BIRD_R){ bird.y = BIRD_R; bird.vy = Math.max(bird.vy, 0); }
 
   if (state === 'playing'){
-    // Thời gian chơi + trái tim cộng máu
+    // Thời gian chơi + cấp độ + trái tim cộng máu
     playTime += dt;
+    var lvNow = Math.floor(playTime / LEVEL_SECONDS) + 1;
+    if (lvNow > runLevel){
+      runLevel = lvNow;
+      if (runLevel > bestLevel){
+        bestLevel = runLevel;
+        try { localStorage.setItem(LEVEL_KEY, String(bestLevel)); } catch(e){}
+      }
+      levelBannerUntil = performance.now() + 1800;
+      sfxLevel();
+    }
     if (!heart && playTime >= nextHeartAt){
       spawnHeart();
       nextHeartAt = playTime + heartInterval(playTime);
@@ -632,6 +667,17 @@ function draw(){
     ctx.fillStyle = 'rgba(230,40,40,' + (0.30 * (1 - (fnow - flashAt) / 260)).toFixed(3) + ')';
     ctx.fillRect(0, 0, W, H);
   }
+  // Banner lên level
+  if (fnow < levelBannerUntil){
+    ctx.save();
+    ctx.font = '900 32px "Segoe UI", Arial, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(84,55,13,.85)';
+    ctx.strokeText('🎉 LEVEL ' + runLevel + '!', W / 2, PLAY_H * 0.3);
+    ctx.fillStyle = '#ffd93b';
+    ctx.fillText('🎉 LEVEL ' + runLevel + '!', W / 2, PLAY_H * 0.3);
+    ctx.restore();
+  }
 }
 function drawHeart(){
   if (!heart) return;
@@ -661,12 +707,12 @@ function drawHealth(){
 function drawHud(){
   ctx.save();
   ctx.fillStyle = 'rgba(0,0,0,.30)';
-  ctx.fillRect(10, 10, 158, 30);
+  ctx.fillRect(10, 10, 218, 30);
   ctx.font = '700 15px "Segoe UI", Arial, sans-serif';
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   ctx.fillStyle = '#fff';
   var mm = Math.floor(playTime / 60), ss = Math.floor(playTime % 60);
-  ctx.fillText('❤️ ' + heartsGot + '   ⏱ ' + mm + ':' + (ss < 10 ? '0' : '') + ss, 18, 26);
+  ctx.fillText('⭐ Lv ' + runLevel + '  ❤️ ' + heartsGot + '  ⏱ ' + mm + ':' + (ss < 10 ? '0' : '') + ss, 18, 26);
   ctx.restore();
 }
 function drawFloaters(){
@@ -812,6 +858,8 @@ window.__chim = {
   hp: function(){ return hp; },
   revives: function(){ return heartsGot; },
   hearts: function(){ return heartsGot; },
+  level: function(){ return runLevel; },
+  bestLevel: function(){ return bestLevel; },
   lock: function(){ return { deaths: lockDeaths, until: lockUntil, locked: isLocked(), remainSec: Math.ceil(lockRemainMs() / 1000) }; },
   clearLock: function(){ lockDeaths = 0; lockUntil = 0; saveLock(); refreshLockUI(); },
   time: function(){ return Math.floor(playTime); },
@@ -825,6 +873,7 @@ window.__chim = {
 resize();
 reset();
 refreshLockUI();
+refreshLevelLine();
 elBestLine.textContent = '🏆 Kỷ lục: ' + best;
 requestAnimationFrame(loop);
 })();
