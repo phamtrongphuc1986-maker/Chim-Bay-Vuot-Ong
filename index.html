@@ -37,7 +37,22 @@
   }
   .hidden { display:none !important; }
   /* Màn hình bắt đầu */
-  #startScreen { background:linear-gradient(180deg, rgba(0,0,0,.12), rgba(0,0,0,0) 40%); justify-content:flex-start; padding-top:11%; }
+  #startScreen { background:linear-gradient(180deg, rgba(0,0,0,.12), rgba(0,0,0,0) 40%); justify-content:flex-start; padding:16px 16px 12px; }
+  /* Màn hình bắt đầu là cột flex cao 100%: tiêu đề cố định trên, hộp hướng dẫn ở giữa
+     co giãn + cuộn được bên trong, nút BẮT ĐẦU + hộp đếm ngược khóa + dòng Level/Kỷ lục
+     cố định dưới cùng — luôn nhìn thấy, không cần cuộn trang, kể cả màn hình thấp. */
+  #startScreen .gameTitle, #startScreen .subTitle { flex:0 0 auto; }
+  #startScreen .howto {
+    flex:1 1 auto; min-height:0; width:100%; max-width:320px; margin-top:16px;
+    overflow-y:auto; -webkit-overflow-scrolling:touch; touch-action:pan-y;
+  }
+  #startScreen .btn, #startScreen .lockNote, #startScreen .bestLine { flex:0 0 auto; }
+  @media (max-height:640px) {
+    #startScreen { padding-top:10px; }
+    #startScreen .gameTitle { font-size:34px; }
+    #startScreen .howto { font-size:14px; margin-top:10px; }
+    #startScreen .btn { margin-top:12px; padding:11px 36px; font-size:19px; }
+  }
   .gameTitle {
     font-size:44px; font-weight:900; line-height:1.08; color:#ffd93b;
     text-shadow: -3px 0 0 #54370d, 3px 0 0 #54370d, 0 -3px 0 #54370d, 0 4px 0 #54370d, 0 8px 0 rgba(0,0,0,.22);
@@ -130,7 +145,7 @@
         Qua mỗi ống được <b>+1 điểm</b>. Chim có <b>5 vạch máu</b> trên đầu — chạm ống mất 1 vạch, hết máu là thua.<br>
         💗 Nhặt <b>trái tim</b> bay trên đường: <b>+1 vạch máu</b>, cộng dồn được hơn 5 vạch. Còn 3 hoặc 1 vạch máu sẽ hiện nút nạp +1 máu (xem quảng cáo + 15.000đ).<br>
         ⭐ <b>Cấp độ chim:</b> sống sót mỗi 300 giây là qua 1 level — Level 1 là 300 giây đầu tiên, cấp độ lưu vĩnh viễn, không giới hạn.<br>
-        ☠️ Chết là phải <b>chờ mới chơi lại</b>: chết lần 1 chờ 8 tiếng, lần 2 chờ 12 tiếng, từ lần 3 chờ 24 tiếng. Giờ chờ tính theo <b>giờ máy chủ</b> — đổi giờ điện thoại, múi giờ hay VPN đều không qua được.
+        ☠️ Chết là phải <b>chờ mới chơi lại</b>: chết lần 1 chờ 8 tiếng, lần 2 chờ 12 tiếng, từ lần 3 chờ 24 tiếng. Giờ chờ tính theo <b>giờ máy chủ</b> — đổi giờ điện thoại, múi giờ hay VPN đều không qua được. Số lần chết lưu trên <b>máy chủ theo máy của bạn</b> — xóa app hay cài lại vẫn tính tiếp.
       </div>
       <button class="btn green" id="btnStart">▶ BẮT ĐẦU</button>
       <div class="lockNote hidden" id="lockNote"></div>
@@ -289,15 +304,19 @@ function serverNow(){
   return t;
 }
 function saveClock(){ try { localStorage.setItem(CLOCK_KEY, JSON.stringify({ last: lastServerNow })); } catch(e){} }
+function adoptServerTime(nowMs){
+  if (!nowMs) return;
+  clockAnchor = { server: nowMs, perf: performance.now() };
+  timeSynced = true;
+  if (nowMs > lastServerNow) lastServerNow = nowMs;
+  saveClock();
+}
 function syncServerTime(){
   fetch(PAY_API + '/api/time')
     .then(function(r){ return r.json(); })
     .then(function(d){
       if (d && d.ok && d.now){
-        clockAnchor = { server: d.now, perf: performance.now() };
-        timeSynced = true;
-        if (d.now > lastServerNow) lastServerNow = d.now;
-        saveClock();
+        adoptServerTime(d.now);
         refreshLockUI();
       }
     })
@@ -351,6 +370,10 @@ function registerDeath(){
   lockDeaths++;
   lockUntil = serverNow() + lockHoursFor(lockDeaths) * 3600 * 1000;
   saveLock();
+  postDeathToServer();
+}
+function renderOverWait(){
+  if (elOverWait) elOverWait.textContent = '⏳ Chết lần thứ ' + lockDeaths + ' — phải chờ ' + lockHoursFor(lockDeaths) + ' tiếng mới chơi lại được. Bấm CHƠI LẠI để xem đồng hồ đếm ngược.';
 }
 function fmtWait(ms){
   var s = Math.ceil(ms / 1000);
@@ -366,6 +389,77 @@ function refreshLockUI(){
   if (elBtnStart) elBtnStart.disabled = locked;
 }
 setInterval(refreshLockUI, 500);
+
+/* ===== Khóa chờ lưu trên MÁY CHỦ theo mã thiết bị (lệnh Phúc 22:11 16/11/2026) =====
+   Máy chủ mochi-pay là nguồn sự thật về số lần chết + giờ mở khóa của từng máy:
+   xóa dữ liệu app / cài lại app KHÔNG reset được. Trong app Android lấy ANDROID_ID
+   qua Capacitor Device (gắn với máy + khóa ký app, bền qua cài lại); trên web dùng
+   UUID lưu localStorage (web xóa dữ liệu thì vẫn mất — đích chính là app).
+   Không lấy được mã thiết bị / mất mạng → rơi về cơ chế lưu local như cũ, không chặn chơi. */
+var DEVICE_KEY = 'flap-device-v1';
+var deviceId = '';
+try { deviceId = localStorage.getItem(DEVICE_KEY) || ''; } catch(e){}
+function validDeviceId(s){ return typeof s === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(s); }
+function makeUuid(){
+  var hex = '0123456789abcdef', s = '', i, n;
+  for (i = 0; i < 36; i++){
+    if (i === 8 || i === 13 || i === 18 || i === 23) s += '-';
+    else if (i === 14) s += '4';
+    else if (i === 19){ n = Math.random() * 16 | 0; s += hex[(n & 0x3) | 0x8]; }
+    else s += hex[Math.random() * 16 | 0];
+  }
+  return s;
+}
+function storeDeviceId(){ try { localStorage.setItem(DEVICE_KEY, deviceId); } catch(e){} }
+function resolveDeviceId(done){
+  var cap = window.Capacitor;
+  if (cap && cap.isNativePlatform && cap.isNativePlatform() && cap.Plugins && cap.Plugins.Device && cap.Plugins.Device.getId){
+    cap.Plugins.Device.getId().then(function(r){
+      var id = r && (r.identifier || r.uuid);
+      if (validDeviceId(id)){ deviceId = id; storeDeviceId(); }
+      else if (!validDeviceId(deviceId)){ deviceId = makeUuid(); storeDeviceId(); }
+      done();
+    }).catch(function(){
+      if (!validDeviceId(deviceId)){ deviceId = makeUuid(); storeDeviceId(); }
+      done();
+    });
+    return;
+  }
+  if (!validDeviceId(deviceId)){ deviceId = makeUuid(); storeDeviceId(); }
+  done();
+}
+/* Nhận deaths/until từ máy chủ: quy đổi until về khung giờ serverNow() bằng phần thời gian còn lại
+   (until - now trong cùng một phản hồi) rồi lấy MAX với local — phía nào lớn hơn thì thắng, không bao giờ giảm. */
+function adoptServerLock(d){
+  if (!d || !d.ok) return;
+  adoptServerTime(Number(d.now) || 0);
+  var sDeaths = Number(d.deaths) || 0;
+  var sUntil = 0;
+  if (d.until) sUntil = serverNow() + Math.max(0, (Number(d.until) || 0) - (Number(d.now) || 0));
+  var changed = false;
+  if (sDeaths > lockDeaths){ lockDeaths = sDeaths; changed = true; }
+  if (sUntil > lockUntil){ lockUntil = sUntil; changed = true; }
+  if (changed) saveLock();
+  refreshLockUI();
+  if (state === 'over') renderOverWait();
+}
+function fetchServerLock(){
+  if (!validDeviceId(deviceId)) return;
+  fetch(PAY_API + '/api/flap/lock?d=' + encodeURIComponent(deviceId))
+    .then(function(r){ return r.json(); })
+    .then(adoptServerLock)
+    .catch(function(){});
+}
+function postDeathToServer(){
+  if (!validDeviceId(deviceId)) return;
+  fetch(PAY_API + '/api/flap/death', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ d: deviceId, deathsHint: lockDeaths }) })
+    .then(function(r){ return r.json(); })
+    .then(adoptServerLock)
+    .catch(function(){}); // mất mạng: giữ khóa local đã tính, lần chết sau POST sẽ đồng bộ lên (deathsHint)
+}
+function initDeviceLock(){
+  resolveDeviceId(function(){ fetchServerLock(); });
+}
 
 var BIRD_X = 96, BIRD_R = 17, HIT_R = 15;
 var GRAV = 1500, FLAP_V = -465, MAX_FALL = 920;
@@ -476,7 +570,7 @@ function gameOver(){
   syncServerTime();
   refreshLevelLine();
   if (elOverLevel) elOverLevel.textContent = '⭐ Ván này đạt Level ' + runLevel + ' · Cấp cao nhất: Level ' + bestLevel;
-  if (elOverWait) elOverWait.textContent = '⏳ Chết lần thứ ' + lockDeaths + ' — phải chờ ' + lockHoursFor(lockDeaths) + ' tiếng mới chơi lại được. Bấm CHƠI LẠI để xem đồng hồ đếm ngược.';
+  renderOverWait();
   refreshLockUI();
   updateHpBtn();
   overAt = performance.now();
@@ -798,6 +892,7 @@ function pressAction(){
 }
 stage.addEventListener('pointerdown', function(e){
   if (e.target.closest('button')) return;
+  if (e.target.closest('#startScreen .howto')) return; // vuốt cuộn hộp hướng dẫn ở màn hình bắt đầu: không bắt đầu chơi
   e.preventDefault();
   pressAction();
 });
@@ -909,6 +1004,8 @@ window.__chim = {
   clearLock: function(){ lockDeaths = 0; lockUntil = 0; saveLock(); refreshLockUI(); },
   serverNow: function(){ return Math.floor(serverNow()); },
   synced: function(){ return timeSynced; },
+  deviceId: function(){ return deviceId; },
+  serverLock: function(){ fetchServerLock(); return { deaths: lockDeaths, until: lockUntil }; },
   time: function(){ return Math.floor(playTime); },
   setHp: function(n){ hp = Math.max(0, Math.min(HP_MAX, n | 0)); updateHpBtn(); },
   spawnHeart: function(){ if (!heart) spawnHeart(); },
@@ -922,6 +1019,7 @@ reset();
 refreshLockUI();
 refreshLevelLine();
 syncServerTime();
+initDeviceLock();
 elBestLine.textContent = '🏆 Kỷ lục: ' + best;
 requestAnimationFrame(loop);
 })();
