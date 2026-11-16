@@ -53,6 +53,9 @@
   .howto .tapIcon { font-size:26px; display:block; margin-bottom:2px; animation:bob 1s ease-in-out infinite; }
   @keyframes bob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-7px)} }
   .bestLine { margin-top:16px; color:#fff; font-size:16px; font-weight:800; text-shadow:0 2px 0 rgba(0,0,0,.4); }
+  .lockNote { margin-top:14px; max-width:320px; background:rgba(160,20,20,.88); color:#fff; font-size:15px; font-weight:800; line-height:1.45; padding:10px 16px; border-radius:12px; border:2px solid #ffd93b; text-shadow:0 1px 0 rgba(0,0,0,.4); }
+  .overWait { margin-top:12px; background:rgba(160,20,20,.12); border:2px solid #c0392b; color:#a02020; font-size:14px; font-weight:800; line-height:1.45; padding:8px 12px; border-radius:10px; }
+  .btn[disabled] { filter:grayscale(.8); opacity:.55; cursor:not-allowed; }
   .btn {
     margin-top:22px; border:none; cursor:pointer; font-family:inherit;
     background:linear-gradient(180deg,#ffb03a,#f07f13); color:#fff; font-weight:900; font-size:22px;
@@ -125,9 +128,11 @@
         <span class="tapIcon">👆</span>
         <b>Chạm màn hình</b>, bấm <b>chuột</b> hoặc phím <b>Cách (Space)</b> để chim bay lên.<br>
         Qua mỗi ống được <b>+1 điểm</b>. Chim có <b>5 vạch máu</b> trên đầu — chạm ống mất 1 vạch, hết máu là thua.<br>
-        💗 Nhặt <b>trái tim</b> bay trên đường để có 1 lần <b>hồi sinh</b>. Còn 3 hoặc 1 vạch máu sẽ hiện nút nạp +1 máu (xem quảng cáo + 15.000đ).
+        💗 Nhặt <b>trái tim</b> bay trên đường: <b>+1 vạch máu</b>, cộng dồn được hơn 5 vạch. Còn 3 hoặc 1 vạch máu sẽ hiện nút nạp +1 máu (xem quảng cáo + 15.000đ).<br>
+        ☠️ Chết là phải <b>chờ mới chơi lại</b>: chết lần 1 chờ 8 tiếng, lần 2 chờ 12 tiếng, từ lần 3 chờ 24 tiếng.
       </div>
       <button class="btn green" id="btnStart">▶ BẮT ĐẦU</button>
+      <div class="lockNote hidden" id="lockNote"></div>
       <div class="bestLine" id="bestLine">🏆 Kỷ lục: 0</div>
     </div>
 
@@ -140,10 +145,11 @@
           <div class="scoreCell"><div class="lbl">ĐIỂM</div><div class="val" id="finalScore">0</div></div>
           <div class="scoreCell"><div class="lbl">KỶ LỤC<span id="newBadge" class="hidden">MỚI!</span></div><div class="val" id="finalBest">0</div></div>
         </div>
+        <div class="overWait" id="overWait"></div>
       </div>
       <div class="overBtns">
         <button class="btn" id="btnAgain">↻ CHƠI LẠI</button>
-        <div class="hintTxt">Chưa phục thì chơi lại ngay — phá kỷ lục đi! 🔥</div>
+        <div class="hintTxt">Hết giờ chờ là chơi lại được — giữ mạng cẩn thận nhé! 🔥</div>
       </div>
     </div>
 
@@ -241,15 +247,15 @@ var score = 0, frames = 0, groundX = 0;
 var bird, pipes, lastTime = 0, overAt = 0, isNewRecord = false;
 var botMode = false;
 
-/* ===== Máu + hồi sinh + nạp máu (bản 16/11/2026) ===== */
+/* ===== Máu + tim cộng máu + nạp máu + khóa chờ khi chết (bản 16/11/2026) ===== */
 var HP_MAX = 5;                 // 5 vạch máu trên đầu chim
 var HP_ITEM = 'flapHp';         // mã vật phẩm trên máy chủ thanh toán
 var PAY_API = 'https://game.hialo.vn/mochi-pay';
 var AD_MODE = 'placeholder';    // 'admob': khi có Google AdMob thì xem QC xong cộng máu luôn, KHÔNG thu 15.000đ
 var AD_SECONDS = 5;             // thời lượng quảng cáo giữ chỗ (giây)
-var hp = HP_MAX, revives = 0, playTime = 0;
+var hp = HP_MAX, heartsGot = 0, playTime = 0;
 var heart = null, nextHeartAt = 120;   // trái tim đầu tiên xuất hiện ở giây 120
-var invulnUntil = 0, flashAt = 0, reviveBannerUntil = 0;
+var invulnUntil = 0, flashAt = 0;
 var floaters = [];
 var payOpen = false, payPoll = null, payCode = null, adTimer = null;
 var elBtnHp = document.getElementById('btnHp');
@@ -259,6 +265,43 @@ var elAdCount = document.getElementById('adCount');
 var elPayCode = document.getElementById('payCode');
 var elPayQr = document.getElementById('payQr');
 var elPayStatus = document.getElementById('payStatus');
+
+/* ===== Khóa chờ sau khi chết (lệnh Phúc 21:02 16/11/2026) =====
+   Chết lần 1: chờ 8 tiếng · lần 2: 12 tiếng · từ lần 3: 24 tiếng.
+   Số lần chết cộng dồn vĩnh viễn (lưu localStorage), hết giờ chờ mới chơi lại được. */
+var LOCK_KEY = 'flap-lock-v1';
+var lockDeaths = 0, lockUntil = 0;
+try {
+  var lk = JSON.parse(localStorage.getItem(LOCK_KEY) || 'null');
+  if (lk){ lockDeaths = lk.deaths | 0; lockUntil = lk.until | 0; }
+} catch(e){}
+var elLockNote = document.getElementById('lockNote');
+var elOverWait = document.getElementById('overWait');
+var elBtnStart = document.getElementById('btnStart');
+var elBtnAgain = document.getElementById('btnAgain');
+function lockHoursFor(n){ return n <= 1 ? 8 : (n === 2 ? 12 : 24); }
+function lockRemainMs(){ return Math.max(0, lockUntil - Date.now()); }
+function isLocked(){ return lockRemainMs() > 0; }
+function saveLock(){ try { localStorage.setItem(LOCK_KEY, JSON.stringify({ deaths: lockDeaths, until: lockUntil })); } catch(e){} }
+function registerDeath(){
+  lockDeaths++;
+  lockUntil = Date.now() + lockHoursFor(lockDeaths) * 3600 * 1000;
+  saveLock();
+}
+function fmtWait(ms){
+  var s = Math.ceil(ms / 1000);
+  var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+  return h + ' giờ ' + (m < 10 ? '0' : '') + m + ' phút ' + (ss < 10 ? '0' : '') + ss + ' giây';
+}
+function refreshLockUI(){
+  var locked = isLocked();
+  if (elLockNote){
+    elLockNote.textContent = locked ? ('⏳ Chết lần thứ ' + lockDeaths + ' — chờ ' + fmtWait(lockRemainMs()) + ' nữa mới chơi lại được.') : '';
+    elLockNote.classList.toggle('hidden', !locked);
+  }
+  if (elBtnStart) elBtnStart.disabled = locked;
+}
+setInterval(refreshLockUI, 500);
 
 var BIRD_X = 96, BIRD_R = 17, HIT_R = 15;
 var GRAV = 1500, FLAP_V = -465, MAX_FALL = 920;
@@ -271,9 +314,9 @@ function reset(){
   bird = { y: PLAY_H * 0.46, vy: 0, rot: 0, wing: 0 };
   pipes = [];
   score = 0; frames = 0; isNewRecord = false;
-  hp = HP_MAX; revives = 0; playTime = 0;
+  hp = HP_MAX; heartsGot = 0; playTime = 0;
   heart = null; nextHeartAt = 120; floaters = [];
-  invulnUntil = 0; flashAt = 0; reviveBannerUntil = 0;
+  invulnUntil = 0; flashAt = 0;
   if (payOpen) closeHpFlow();
   elScore.textContent = '0';
   spawnPipe(W + 130);
@@ -295,6 +338,7 @@ function medalFor(s){
 }
 
 function startGame(){
+  if (isLocked()){ refreshLockUI(); return; } // đang trong giờ chờ sau khi chết
   reset();
   state = 'playing';
   elStart.classList.add('hidden');
@@ -306,6 +350,7 @@ function startGame(){
 function showStart(){
   state = 'ready';
   reset();
+  refreshLockUI();
   elStart.classList.remove('hidden');
   elOver.classList.add('hidden');
   elScore.classList.remove('on');
@@ -341,7 +386,6 @@ function addFloater(txt, x, y, color){
   floaters.push({ txt: txt, x: x, y: y, color: color || '#fff', until: performance.now() + 1300 });
 }
 function sfxHeart(){ tone(660, 660, 0.08, 'sine', 0.15); tone(990, 990, 0.14, 'sine', 0.15, 0.08); }
-function sfxRevive(){ tone(440, 440, 0.09, 'square', 0.1); tone(660, 660, 0.09, 'square', 0.1, 0.09); tone(880, 880, 0.16, 'square', 0.12, 0.18); }
 function updateHpBtn(){
   var show = state === 'playing' && !payOpen && (hp === 3 || hp === 1);
   elBtnHp.classList.toggle('hidden', !show);
@@ -356,27 +400,14 @@ function grazePipe(){
   if (navigator.vibrate) { try { navigator.vibrate(90); } catch(e){} }
   addFloater('-1 MÁU', BIRD_X, bird.y - 34, '#ff8a7a');
   updateHpBtn();
-  if (hp <= 0){ die(); return; }
+  if (hp <= 0){ hitSomething(); return; }  // hết máu: chết hẳn, vào giờ chờ
   bird.vy = Math.min(bird.vy, -240);  // nảy ra khỏi ống, bay tiếp
-}
-function die(){
-  if (revives > 0){ doRevive(); return; }
-  hitSomething();
-}
-function doRevive(){
-  revives--;
-  hp = HP_MAX;
-  invulnUntil = performance.now() + 2000;
-  reviveBannerUntil = performance.now() + 1600;
-  pipes = pipes.filter(function(p){ return p.x > BIRD_X + 200 || p.x + PIPE_W < BIRD_X - 70; });
-  if (!pipes.length) spawnPipe(W + 170);
-  bird.y = Math.min(bird.y, PLAY_H * 0.5);
-  bird.vy = -240;
-  sfxRevive();
-  updateHpBtn();
 }
 function gameOver(){
   state = 'over';
+  registerDeath();
+  if (elOverWait) elOverWait.textContent = '⏳ Chết lần thứ ' + lockDeaths + ' — phải chờ ' + lockHoursFor(lockDeaths) + ' tiếng mới chơi lại được. Bấm CHƠI LẠI để xem đồng hồ đếm ngược.';
+  refreshLockUI();
   updateHpBtn();
   overAt = performance.now();
   if (score > best){
@@ -418,7 +449,7 @@ function update(dt){
   if (bird.y < BIRD_R){ bird.y = BIRD_R; bird.vy = Math.max(bird.vy, 0); }
 
   if (state === 'playing'){
-    // Thời gian chơi + trái tim hồi sinh
+    // Thời gian chơi + trái tim cộng máu
     playTime += dt;
     if (!heart && playTime >= nextHeartAt){
       spawnHeart();
@@ -430,9 +461,10 @@ function update(dt){
       var hy = heart.y + Math.sin(heart.t * 2.4) * 14;
       var hdx = heart.x - BIRD_X, hdy = hy - bird.y;
       if (hdx * hdx + hdy * hdy < 42 * 42){
-        heart = null; revives++;
+        heart = null; hp++; heartsGot++;   // mỗi trái tim = +1 vạch máu, cộng dồn hơn 5 vạch
         sfxHeart();
-        addFloater('+1 HỒI SINH ❤️', BIRD_X, bird.y - 40, '#ffd93b');
+        addFloater('+1 MÁU ❤️', BIRD_X, bird.y - 40, '#ffd93b');
+        updateHpBtn();
       } else if (heart.x < -44) heart = null;
     }
     // Ống
@@ -469,14 +501,9 @@ function update(dt){
 
   // Chạm đất
   if (bird.y + BIRD_R >= PLAY_H){
-    if (state === 'playing' && revives > 0){
-      doRevive();
-      bird.y = PLAY_H * 0.46; bird.vy = -300;
-    } else {
-      bird.y = PLAY_H - BIRD_R;
-      if (state === 'playing'){ sfxHit(); if (navigator.vibrate){ try{ navigator.vibrate(120); }catch(e){} } }
-      if (state !== 'over') gameOver();
-    }
+    bird.y = PLAY_H - BIRD_R;
+    if (state === 'playing'){ sfxHit(); if (navigator.vibrate){ try{ navigator.vibrate(120); }catch(e){} } }
+    if (state !== 'over') gameOver();
   }
 }
 
@@ -605,17 +632,6 @@ function draw(){
     ctx.fillStyle = 'rgba(230,40,40,' + (0.30 * (1 - (fnow - flashAt) / 260)).toFixed(3) + ')';
     ctx.fillRect(0, 0, W, H);
   }
-  // Banner hồi sinh
-  if (fnow < reviveBannerUntil){
-    ctx.save();
-    ctx.font = '900 34px "Segoe UI", Arial, sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(84,55,13,.85)';
-    ctx.strokeText('❤️ HỒI SINH!', W / 2, PLAY_H * 0.34);
-    ctx.fillStyle = '#ffd93b';
-    ctx.fillText('❤️ HỒI SINH!', W / 2, PLAY_H * 0.34);
-    ctx.restore();
-  }
 }
 function drawHeart(){
   if (!heart) return;
@@ -630,10 +646,11 @@ function drawHeart(){
 }
 function drawHealth(){
   var bw = 15, bh = 6, gp = 3;
-  var totalW = HP_MAX * bw + (HP_MAX - 1) * gp;
+  var slots = Math.max(HP_MAX, hp);   // nhặt tim thì vạch máu dài thêm quá 5
+  var totalW = slots * bw + (slots - 1) * gp;
   var x0 = BIRD_X - totalW / 2, y0 = bird.y - BIRD_R - 17;
   var col = hp >= 3 ? '#57d93d' : (hp === 2 ? '#ffb03a' : '#e62e2e');
-  for (var i = 0; i < HP_MAX; i++){
+  for (var i = 0; i < slots; i++){
     var x = x0 + i * (bw + gp);
     ctx.fillStyle = i < hp ? col : 'rgba(255,255,255,.28)';
     ctx.fillRect(x, y0, bw, bh);
@@ -649,7 +666,7 @@ function drawHud(){
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   ctx.fillStyle = '#fff';
   var mm = Math.floor(playTime / 60), ss = Math.floor(playTime % 60);
-  ctx.fillText('❤️ ' + revives + '   ⏱ ' + mm + ':' + (ss < 10 ? '0' : '') + ss, 18, 26);
+  ctx.fillText('❤️ ' + heartsGot + '   ⏱ ' + mm + ':' + (ss < 10 ? '0' : '') + ss, 18, 26);
   ctx.restore();
 }
 function drawFloaters(){
@@ -701,7 +718,7 @@ document.addEventListener('keydown', function(e){
   }
 });
 document.getElementById('btnStart').addEventListener('click', function(e){ e.stopPropagation(); audio(); startGame(); });
-document.getElementById('btnAgain').addEventListener('click', function(e){ e.stopPropagation(); audio(); sfxSwoosh(); startGame(); });
+document.getElementById('btnAgain').addEventListener('click', function(e){ e.stopPropagation(); audio(); if (isLocked()){ showStart(); return; } sfxSwoosh(); startGame(); });
 
 /* ===== Nạp +1 máu: xem quảng cáo -> trả 15.000đ qua SePay ===== */
 function showPayStep(which){
@@ -793,7 +810,10 @@ window.__chim = {
   bot: function(on){ botMode = !!on; },
   overVisible: function(){ return !elOver.classList.contains('hidden'); },
   hp: function(){ return hp; },
-  revives: function(){ return revives; },
+  revives: function(){ return heartsGot; },
+  hearts: function(){ return heartsGot; },
+  lock: function(){ return { deaths: lockDeaths, until: lockUntil, locked: isLocked(), remainSec: Math.ceil(lockRemainMs() / 1000) }; },
+  clearLock: function(){ lockDeaths = 0; lockUntil = 0; saveLock(); refreshLockUI(); },
   time: function(){ return Math.floor(playTime); },
   setHp: function(n){ hp = Math.max(0, Math.min(HP_MAX, n | 0)); updateHpBtn(); },
   spawnHeart: function(){ if (!heart) spawnHeart(); },
@@ -804,6 +824,7 @@ window.__chim = {
 
 resize();
 reset();
+refreshLockUI();
 elBestLine.textContent = '🏆 Kỷ lục: ' + best;
 requestAnimationFrame(loop);
 })();
