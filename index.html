@@ -497,8 +497,9 @@ function medalFor(s){
 }
 
 function startGame(){
-  if (lockUntil > 0 && !timeSynced){ syncServerTime(); return; } // có khóa đã lưu: phải chốt giờ máy chủ trước khi quyết định
   if (isLocked()){ refreshLockUI(); return; } // đang trong giờ chờ sau khi chết
+  if (lockUntil > 0){ lockUntil = 0; saveLock(); } // khóa cũ đã hết hạn theo giờ ước lượng tốt nhất: dọn luôn để không kẹt về sau
+  if (!timeSynced) syncServerTime(); // đồng bộ giờ máy chủ chạy nền — KHÔNG chặn chơi (bản cũ: hễ chưa đồng bộ được là nút BẮT ĐẦU chết lặng không báo gì, sửa 19/11/2026)
   reset();
   state = 'playing';
   elStart.classList.add('hidden');
